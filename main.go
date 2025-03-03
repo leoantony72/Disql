@@ -43,52 +43,56 @@ func ReceiveMessages(c net.Conn, db *gorm.DB) {
 			continue
 		}
 		cmd := string(buffer[0:n])
-		if isQueryReturningResults(cmd) {
-			rows, err := db.Raw(cmd).Rows()
-			if err != nil {
-				c.Write([]byte("SQL Error: " + err.Error() + "\n"))
+		ExecuteSQL(c, db, cmd)
+
+	}
+}
+
+func ExecuteSQL(c net.Conn, db *gorm.DB, cmd string) {
+	if isQueryReturningResults(cmd) {
+		rows, err := db.Raw(cmd).Rows()
+		if err != nil {
+			c.Write([]byte("SQL Error: " + err.Error() + "\n"))
+			return
+		}
+		defer rows.Close()
+
+		var results []string
+		cols, _ := rows.Columns()
+
+		// Iterate over rows
+		for rows.Next() {
+			values := make([]interface{}, len(cols))
+			valuePtrs := make([]interface{}, len(cols))
+			for i := range values {
+				valuePtrs[i] = &values[i]
+			}
+
+			if err := rows.Scan(valuePtrs...); err != nil {
+				c.Write([]byte("Error reading results\n"))
 				continue
 			}
-			defer rows.Close()
 
-			var results []string
-			cols, _ := rows.Columns()
-
-			// Iterate over rows
-			for rows.Next() {
-				values := make([]interface{}, len(cols))
-				valuePtrs := make([]interface{}, len(cols))
-				for i := range values {
-					valuePtrs[i] = &values[i]
-				}
-
-				if err := rows.Scan(valuePtrs...); err != nil {
-					c.Write([]byte("Error reading results\n"))
-					continue
-				}
-
-				rowStr := ""
-				for i, col := range cols {
-					rowStr += fmt.Sprintf("%s: %v | ", col, values[i])
-				}
-				results = append(results, rowStr)
+			rowStr := ""
+			for i, col := range cols {
+				rowStr += fmt.Sprintf("%s: %v | ", col, values[i])
 			}
-
-			// Send results to the client
-			if len(results) > 0 {
-				c.Write([]byte(strings.Join(results, "\n") + "\n"))
-			} else {
-				c.Write([]byte("No results found.\n"))
-			}
-		} else {
-			// Execute command without returning results
-			if err := db.Exec(cmd).Error; err != nil {
-				c.Write([]byte("SQL Error: " + err.Error() + "\n"))
-			} else {
-				c.Write([]byte("Query executed successfully.\n"))
-			}
+			results = append(results, rowStr)
 		}
 
+		// Send results to the client
+		if len(results) > 0 {
+			c.Write([]byte(strings.Join(results, "\n") + "\n"))
+		} else {
+			c.Write([]byte("No results found.\n"))
+		}
+	} else {
+		// Execute command without returning results
+		if err := db.Exec(cmd).Error; err != nil {
+			c.Write([]byte("SQL Error: " + err.Error() + "\n"))
+		} else {
+			c.Write([]byte("Query executed successfully.\n"))
+		}
 	}
 }
 
