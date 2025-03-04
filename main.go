@@ -2,15 +2,20 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/leoantony72/disql/db"
 	pb "github.com/leoantony72/disql/disql"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"gorm.io/gorm"
 )
 
@@ -51,23 +56,57 @@ func (s *server) RollBack(ctx context.Context, req *pb.RollBackRequest) (*pb.Rol
 	return &pb.RollBackResponse{Success: true}, nil
 }
 
+var port string
+var rpcPort string
+var dbFile string
+
 func main() {
-	lis, err := net.Listen("tcp", ":8000")
+	server := &server{}
+	server.connection = os.Args[1:]
+	server.data = make(map[string]string)
+
+	var connStr string
+	flag.StringVar(&connStr, "connections", "", "Comma-separated list of connection URLs")
+	// Define a flag for the port
+	flag.StringVar(&port, "port", "50051", "Server port (default: 50051)")
+	flag.StringVar(&rpcPort, "rpc", "70", "rpcPort port (default: 70)")
+	flag.StringVar(&dbFile, "file", "gorm.db", "default file name (default: gorm.db)")
+
+	flag.Parse()
+	if connStr != "" {
+		server.connection = strings.Split(connStr, ",")
+	}
+	port = ":" + port
+
+	lis, err := net.Listen("tcp", port)
 	if err != nil {
-		fmt.Println("could not listen to port 8000")
+		fmt.Printf("could not listen to port %s\n", port)
 		lis.Close()
 		os.Exit(1)
 	}
-	fmt.Println("tcp server listening on port :8000")
-	db, _ := db.StartDb()
-	grpcServer := grpc.NewServer()
-	server := &server{}
-	pb.RegisterParticipantServer(grpcServer, server)
+	fmt.Printf("tcp server listening on port %s\n", port)
+	db, _ := db.StartDb(dbFile)
+	server.db = db
+
+	go func() {
+		grpcPort := ":" + rpcPort // Ensure correct format
+		lis, err := net.Listen("tcp", grpcPort)
+		if err != nil {
+			fmt.Printf("could not listen to port %s\n", rpcPort)
+			lis.Close()
+			os.Exit(1)
+		}
+		grpcServer := grpc.NewServer()
+		pb.RegisterParticipantServer(grpcServer, server)
+		if err := grpcServer.Serve(lis); err != nil {
+			log.Fatalf("failed to serve gRPC: %v\n", err)
+		}
+	}()
 
 	for {
 		conn, err := lis.Accept()
 		if err != nil {
-			fmt.Printf("could not accept conn from %s", conn.RemoteAddr())
+			fmt.Printf("could not accept conn from %s\n", conn.RemoteAddr())
 			conn.Close()
 			continue
 		}
@@ -89,15 +128,56 @@ func ReceiveMessages(c net.Conn, db *gorm.DB, s *server) {
 		}
 		cmd := string(buffer[0:n])
 
-		ExecuteSQL(c, db, cmd)
-
+		ok := Coordinate(s, cmd)
+		if ok {
+			ExecuteSQL(c, db, cmd)
+		} else {
+			c.Write([]byte("Replication failed!!\n"))
+		}
 	}
 }
 
-func Coordinate(s *server) {
-	for _,v := range s.connection{
-		
+func Coordinate(s *server, cmd string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	success := true
+	for _, url := range s.connection {
+		fmt.Printf("Coordinating with client: %s\n", url)
+
+		// Connect to the client
+		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			log.Printf("Failed to connect to client %s: %v", url, err)
+			success = false
+			break
+		}
+		defer conn.Close()
+		id := uuid.New().String()
+		client := pb.NewParticipantClient(conn)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+		defer cancel()
+
+		// Prepare Phase
+		prepRes, err := client.Prepare(ctx, &pb.PrepareRequest{CmdId: id, Cmd: cmd})
+		if err != nil || !prepRes.Success {
+			log.Printf("Prepare failed for client %s: %v :%s", url, err,cmd)
+			success = false
+			break
+		}
+		fmt.Printf("Prepare successful for client %s : %s\n", url,cmd)
+
+		// Commit Phase
+		commitRes, err := client.Commit(ctx, &pb.CommitRequest{CmdId: id})
+		if err != nil || !commitRes.Success {
+			log.Printf("Commit failed for client %s: %v", url, err)
+			success = false
+			break
+		}
+		success = true
+		fmt.Printf("Commit successful for client %s\n", url)
 	}
+	return success
 }
 
 func ExecuteSQL(c net.Conn, db *gorm.DB, cmd string) {
@@ -177,6 +257,7 @@ func (s *server) ExecuteSQLGrpc(cmd string) bool {
 			}
 			results = append(results, rowStr)
 		}
+		return true
 	} else {
 		// Execute command without returning results
 		if err := s.db.Exec(cmd).Error; err != nil {
@@ -185,7 +266,7 @@ func (s *server) ExecuteSQLGrpc(cmd string) bool {
 			return true
 		}
 	}
-	return false
+	
 }
 
 func isQueryReturningResults(query string) bool {
