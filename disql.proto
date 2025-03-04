@@ -2,14 +2,17 @@ syntax = "proto3";
 
 package disql;  // Replace 'mypackage' with your actual package name
 
+option go_package = "/disql";
+
 service Participant {
     rpc Prepare (PrepareRequest) returns (PrepareResponse);
     rpc Commit (CommitRequest) returns (CommitResponse);
     rpc RollBack (RollBackRequest) returns (RollBackResponse);
+    rpc NewConnection (NewConnectionRequest) returns (NewConnectionResponse);
 }
 
 message PrepareRequest {
-    int64 cmd_id =1;
+    string cmd_id =1;
     string cmd = 2;
 }
 message PrepareResponse {
@@ -17,15 +20,22 @@ message PrepareResponse {
 }
 
 message CommitRequest{
-    int64 cmd_id =1;
+    string cmd_id =1;
 }
 message CommitResponse{
     bool success =1;
 }
 
 message RollBackRequest {
-    int64 cmd_id =1;
+    string cmd_id =1;
 }
 message RollBackResponse{
     bool success = 1;
+}
+
+message NewConnectionRequest{
+    string url =1;
+}
+message NewConnectionResponse{
+    bool success =1;
 }
