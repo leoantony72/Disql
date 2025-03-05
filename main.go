@@ -27,6 +27,10 @@ type server struct {
 	db         *gorm.DB
 }
 
+// @ edit: implement a gossip based algo to send the newely joined server to all
+// the currently servers. The new Server will take a cluster url (url of any running server)
+// sends a rpc req to add them to cluster, running server will then send this message to all the 
+// server in cluster!! 
 func (s *server) NewConnection(ctx context.Context, req *pb.NewConnectionRequest) (*pb.NewConnectionResponse, error) {
 	s.connection = append(s.connection, req.Url)
 	return &pb.NewConnectionResponse{Success: true}, nil
@@ -142,6 +146,8 @@ func Coordinate(s *server, cmd string) bool {
 	defer s.mu.Unlock()
 
 	success := true
+	SucessfullComits := []string{}
+	id := uuid.New().String()
 	for _, url := range s.connection {
 		fmt.Printf("Coordinating with client: %s\n", url)
 
@@ -153,7 +159,6 @@ func Coordinate(s *server, cmd string) bool {
 			break
 		}
 		defer conn.Close()
-		id := uuid.New().String()
 		client := pb.NewParticipantClient(conn)
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 		defer cancel()
@@ -161,11 +166,11 @@ func Coordinate(s *server, cmd string) bool {
 		// Prepare Phase
 		prepRes, err := client.Prepare(ctx, &pb.PrepareRequest{CmdId: id, Cmd: cmd})
 		if err != nil || !prepRes.Success {
-			log.Printf("Prepare failed for client %s: %v :%s", url, err,cmd)
+			log.Printf("Prepare failed for client %s: %v :%s", url, err, cmd)
 			success = false
 			break
 		}
-		fmt.Printf("Prepare successful for client %s : %s\n", url,cmd)
+		fmt.Printf("Prepare successful for client %s : %s\n", url, cmd)
 
 		// Commit Phase
 		commitRes, err := client.Commit(ctx, &pb.CommitRequest{CmdId: id})
@@ -176,6 +181,30 @@ func Coordinate(s *server, cmd string) bool {
 		}
 		success = true
 		fmt.Printf("Commit successful for client %s\n", url)
+		SucessfullComits = append(SucessfullComits, url)
+	}
+
+	if !success {
+		for _, url := range SucessfullComits {
+			conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				log.Printf("Failed to connect to client %s: %v", url, err)
+				success = false
+				break
+			}
+			defer conn.Close()
+			client := pb.NewParticipantClient(conn)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+			defer cancel()
+
+			rollback, err := client.RollBack(ctx, &pb.RollBackRequest{CmdId: id})
+			if err != nil || !rollback.Success {
+				log.Printf("Commit failed for client %s: %v", url, err)
+				success = false
+				break
+			}
+			fmt.Printf("RollBack successful for client %s :for command: %s\n", url, cmd)
+		}
 	}
 	return success
 }
@@ -266,7 +295,7 @@ func (s *server) ExecuteSQLGrpc(cmd string) bool {
 			return true
 		}
 	}
-	
+
 }
 
 func isQueryReturningResults(query string) bool {
