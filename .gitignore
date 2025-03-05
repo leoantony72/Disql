@@ -1,4 +1,2 @@
-
-
-gorm.db
-db.db
+.gorm.db
+.db.db
