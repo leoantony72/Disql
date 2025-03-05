@@ -9,9 +9,9 @@ DisQL is a distributed sqlite server written in golang, with replication done wi
 3. Install dependencies: **`go mod tidy`**
 5. Start the project:
 ```go
-go run main.go -port=9050 -connections=localhost:8080 -file=db.db -rpc=9090
-
 go run main.go -port=8000 -connections=localhost:9090 -file=gorm.db -rpc=8080
+
+go run main.go -port=9000 -connections=localhost:8080 -file=db.db -rpc=9090
 ```
 
 ### Usage
