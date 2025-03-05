@@ -2,12 +2,15 @@
 
 DisQL is a distributed sqlite server written in golang, with replication done with 2-phase commit. It's suitable for your next hobby projects requiring limited database usage.
 
+![Disql architecture](img/Disql.png)
+
 ### Installation
 
 1. Clone the repository: **`git clone https://github.com/leoantony72/Disql.git`**
 2. Navigate to the project directory: **`cd Disql`**
 3. Install dependencies: **`go mod tidy`**
-5. Start the project:
+4. Start the project:
+
 ```go
 go run main.go -port=8000 -connections=localhost:9090 -file=gorm.db -rpc=8080
 
@@ -16,16 +19,17 @@ go run main.go -port=9000 -connections=localhost:8080 -file=db.db -rpc=9090
 
 ### Usage
 
-***Connect to the server 8000/9000***
+**_Connect to the server 8000/9000_**
+
 ```go
     telnet localhost 8000
 ```
 
-***Execute Sql commands***
+**_Execute Sql commands_**
+
 ```sql
    create table student(id int, name varchar(20), age int);
 ```
-
 
 ## **Contributing**
 
